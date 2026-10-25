@@ -600,7 +600,6 @@ function ControlLegend({ touch }: { touch: boolean }) {
         ["H", "Horn (hold, in the jeep)"],
         ["Tab", "Menu"],
         ["I", "Inventory"],
-        ["M", "Marketplace"],
         ["Esc", "Pause"],
       ];
 
