@@ -112,7 +112,7 @@ export function StartScreen(props: StartScreenProps) {
           name={profile?.name ?? null}
         />
 
-        <div className="grid flex-1 items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:gap-10">
+        <div className="grid flex-1 items-start gap-6 lg:grid-cols-[minmax(0,1fr)] lg:gap-10">
           <section className="anim-rise d2 order-2 lg:order-1">
             {mode === "locked" && (
               <LockedPanel
@@ -143,10 +143,6 @@ export function StartScreen(props: StartScreenProps) {
             )}
           </section>
 
-          <aside className="anim-rise d3 order-1 flex flex-col gap-4 lg:order-2">
-            <DataBoard globalStats={globalStats} />
-            <ShiftBoard leaderboard={leaderboard} you={profile?.name ?? null} />
-          </aside>
         </div>
 
         <ControlLegend touch={isTouchLike} />
@@ -171,8 +167,8 @@ function Header({
         <StatusChip
           text={
             isAuthenticated
-              ? `Signed in${name ? ` · ${name}` : ""}`
-              : "Not signed in"
+              ? `Local profile${name ? ` · ${name}` : ""}`
+              : "No profile yet"
           }
           tone={isAuthenticated ? "on" : "off"}
         />
@@ -328,13 +324,13 @@ function RegisterPanel({
 
   return (
     <div className="plate plate-riveted px-5 py-6 md:px-8 md:py-7">
-      <div className="ts-label mb-1">Step 2 of 2</div>
+      <div className="ts-label mb-1">Operator ID</div>
       <h2 className="ts-display mb-3 text-[22px] tracking-normal">
         Create operator ID
       </h2>
       <p className="mb-5 max-w-sm text-[14px] leading-relaxed text-[var(--muted)]">
-        This is the name you appear under on the leaderboard. It is assigned
-        once and cannot be changed later.
+        This is the name on your local profile, saved in this browser. It is
+        assigned once and cannot be changed later.
       </p>
 
       <label className="ts-label mb-2 block" htmlFor="operatorName">
@@ -487,7 +483,7 @@ function MenuPanel({
             style={{ borderColor: "var(--amber-dim)" }}
           >
             <p className="mb-3 text-[13px] leading-relaxed text-[var(--chalk)]">
-              A new shift deletes the progress saved in your profile. Level,
+              A new shift deletes the progress saved in this browser. Level,
               points and statistics all start over from zero.
             </p>
             <div className="flex flex-col gap-2 sm:flex-row">
@@ -514,7 +510,7 @@ function MenuPanel({
 
         <button type="button" className="btn" onClick={onLogout}>
           <span>Sign out</span>
-          <span className="tag">profile is kept</span>
+          <span className="tag">save is kept</span>
         </button>
       </div>
     </div>

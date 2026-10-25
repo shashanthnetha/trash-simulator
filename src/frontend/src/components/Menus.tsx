@@ -1,6 +1,6 @@
-// Trash Simulator – in-game menu: upgrades, missions, inventory, market,
-// statistics and leaderboard. The tab lives in the store, so `setMenu(open,
-// tab)` can jump straight to a section.
+// Trash Simulator – in-game menu: upgrades, missions, inventory, collection
+// and statistics. The tab lives in the store, so `setMenu(open, tab)` can jump
+// straight to a section. (Standalone build: market and leaderboard tabs removed.)
 import type { GlobalStats, LeaderboardEntry } from "../backend";
 import { sound } from "../game/sound";
 import type { GameStore } from "../game/state";
@@ -9,7 +9,6 @@ import { MISSIONS, formatCents, levelFromXp } from "../game/types";
 import type { MarketSlice } from "../hooks/useBackendSync";
 import { CollectionTab } from "./MenuCollection";
 import { InventoryTab } from "./MenuInventory";
-import { MarketTab } from "./MenuMarket";
 import { Chip, EmptyNote, MiniBar, Panel, SectionHead, num } from "./MenuUi";
 import { UpgradesTab } from "./MenuUpgrades";
 
@@ -29,10 +28,8 @@ const TABS: Array<[TabId, string]> = [
   ["upgrades", "Upgrades"],
   ["missions", "Missions"],
   ["inventory", "Inventory"],
-  ["market", "Market"],
   ["collection", "Collection"],
   ["stats", "Statistics"],
-  ["leaderboard", "Leaderboard"],
 ];
 
 function fmtTime(s: number): string {
@@ -61,7 +58,6 @@ export function Menus({
   const selectTab = (id: TabId) => {
     if (id !== tab) sound.uiClick();
     st.setMenu(true, id);
-    if (id === "leaderboard") onRefreshLeaderboard();
   };
 
   return (
@@ -122,18 +118,9 @@ export function Menus({
           {tab === "upgrades" && <UpgradesTab balanceCents={balance} />}
           {tab === "missions" && <MissionsTab />}
           {tab === "inventory" && <InventoryTab />}
-          {tab === "market" && <MarketTab market={market} />}
           {tab === "collection" && <CollectionTab />}
           {tab === "stats" && <StatsTab />}
-          {tab === "leaderboard" && (
-            <LeaderboardTab
-              leaderboard={leaderboard}
-              globalStats={globalStats}
-              busy={leaderboardBusy}
-              onRefresh={onRefreshLeaderboard}
-            />
-          )}
-        </div>
+                  </div>
       </div>
     </div>
   );

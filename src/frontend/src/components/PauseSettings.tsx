@@ -20,7 +20,7 @@ function SaveHint() {
       : `Last saved at ${new Date(lastSavedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}.`;
   return (
     <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3 text-[12px] leading-relaxed text-white/60">
-      {text} Your progress is saved to the profile automatically every five
+      {text} Your progress is saved in this browser automatically every five
       minutes{dirty ? " – there are unsaved changes." : "."}
     </div>
   );
@@ -267,7 +267,7 @@ export function PauseSettings({
                 : "cursor-not-allowed bg-white/5 text-white/35"
             }`}
           >
-            {cloudBusy ? "Saving …" : "Save to profile now"}
+            {cloudBusy ? "Saving …" : "Save progress now"}
           </button>
           <button
             type="button"

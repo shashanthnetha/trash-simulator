@@ -358,11 +358,12 @@ export class Game {
       }
       return;
     }
-    if (a === "inventory" || a === "market") {
-      // Direct hotkeys (I / M): open the menu on that tab; pressing the same
-      // key again closes back into the game, from another tab it just switches.
-      const tab =
-        a === "inventory" ? ("inventory" as const) : ("market" as const);
+    if (a === "inventory") {
+      // Direct hotkey (I): opens the menu on the inventory tab; pressing the
+      // same key again closes back into the game, from another tab it just
+      // switches. (Standalone build: the M/market hotkey is removed with the
+      // marketplace.)
+      const tab = "inventory" as const;
       if (st.menuOpen && st.menuTab === tab) {
         this.resume();
       } else {

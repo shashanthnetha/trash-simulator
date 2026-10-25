@@ -13,6 +13,9 @@ process.env.STORAGE_GATEWAY_URL =
   process.env.STORAGE_GATEWAY_URL || "https://blob.caffeine.ai";
 
 export default defineConfig({
+  // Standalone build: relative asset paths, so the site also works from a
+  // sub-path (e.g. GitHub Pages project sites).
+  base: "./",
   logLevel: "error",
   build: {
     emptyOutDir: true,

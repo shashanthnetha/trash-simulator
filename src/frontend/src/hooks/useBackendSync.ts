@@ -1,67 +1,24 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef } from "react";
-// Trash Simulator – profile hookup: registration, save game, leaderboard, market
-// There is no local save game: everything lives in the profile on chain.
-import { useInternetIdentity } from "../auth/internetIdentity";
-import {
-  type GlobalStats,
-  type LeaderboardEntry,
-  type MarketPrice,
-  type MarketSnapshot,
-  type Order,
-  type ProfileOutput,
-  type Purchase,
-  type SaveInput,
-  type SaveOutput,
-  type SwapQuote,
-  type SwapReceipt,
-  type backendInterface,
-  createActor,
-} from "../backend";
+// Trash Simulator – STANDALONE BUILD: local profile + local save.
+//
+// This file replaces the on-chain sync layer (Internet Identity + Motoko
+// backend canister) with a browser-local implementation for the standalone
+// web build. The exported interface (BackendSync, MarketSlice, all types) is
+// unchanged, so App.tsx and the components work exactly as before.
+//
+// Differences from the original:
+// - No sign-in: the game always runs as a local "operator" profile.
+// - Registration = choosing the operator ID once; stored in localStorage.
+// - Saving = the same SaveData JSON, written to localStorage instead of the
+//   canister (auto-save every five minutes + manual save, as before).
+// - No shared leaderboard/global stats and no marketplace (the backend owned
+//   them): the market slice is inert and the UI hides those tabs.
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { GlobalStats, LeaderboardEntry, ProfileOutput } from "../backend";
 import { useGame } from "../game/state";
 import { type SaveData, levelFromXp } from "../game/types";
-import { useActor } from "./useActor";
 
-/** Automatic save to the profile every five minutes. */
+/** Automatic save every five minutes. */
 export const AUTOSAVE_MS = 300_000;
-
-/**
- * Unwraps an optional Candid value, no matter how the generated bindings
- * represent it: caffeine-bindgen returns `T | null`, agent-js-style clients
- * return `[] | [T]`. Both end up as `T | null` here.
- */
-export function unwrapOpt<T>(v: T | null | undefined | [] | [T]): T | null {
-  if (v == null) return null;
-  if (Array.isArray(v)) return (v as [T?])[0] ?? null;
-  return v;
-}
-
-/**
- * Reads the constructor name of a Candid variant, no matter how the generated
- * bindings represent it ({ ok: ... }, { tag: "ok" } or "ok").
- */
-export function variantKey(res: unknown): string {
-  if (typeof res === "string") return res;
-  if (res != null && typeof res === "object") {
-    const o = res as Record<string, unknown>;
-    for (const probe of ["tag", "kind", "type", "_tag", "__kind__"]) {
-      const v = o[probe];
-      if (typeof v === "string") return v;
-    }
-    const keys = Object.keys(o);
-    if (keys.length === 1) return keys[0];
-    for (const k of [
-      "ok",
-      "alreadyRegistered",
-      "nameTaken",
-      "invalidName",
-      "anonymous",
-    ]) {
-      if (k in o) return k;
-    }
-  }
-  return "";
-}
 
 export type RegisterOutcome =
   | "ok"
@@ -260,262 +217,6 @@ export interface MarketSlice {
   ) => Promise<MarketActionResult>;
 }
 
-const MAX_SAFE_BIG = BigInt(Number.MAX_SAFE_INTEGER);
-
-/** Candid `nat` to a JS number. Cents stay far below 2^53 – clamp regardless. */
-function natToNumber(v: bigint | number): number {
-  if (typeof v === "number") return Math.max(0, Math.floor(v));
-  if (v <= 0n) return 0;
-  return v > MAX_SAFE_BIG ? Number.MAX_SAFE_INTEGER : Number(v);
-}
-
-/** Candid `int` to a JS number, sign preserved. */
-function intToNumber(v: bigint | number): number {
-  if (typeof v === "number") return Math.trunc(v);
-  if (v > MAX_SAFE_BIG) return Number.MAX_SAFE_INTEGER;
-  if (v < -MAX_SAFE_BIG) return -Number.MAX_SAFE_INTEGER;
-  return Number(v);
-}
-
-/** Candid `int` nanoseconds to milliseconds. */
-function nanosToMs(v: bigint | number): number {
-  const ns = typeof v === "bigint" ? v : BigInt(Math.floor(v));
-  return Number(ns / 1_000_000n);
-}
-
-/** A principal is a class instance in the generated client, text elsewhere. */
-function principalText(seller: unknown): string {
-  if (typeof seller === "string") return seller;
-  const p = seller as { toText?: () => string } | null;
-  return typeof p?.toText === "function" ? p.toText() : "";
-}
-
-function toMarketOrder(o: Order, me: string): MarketOrder {
-  const seller = principalText(o.seller);
-  return {
-    id: natToNumber(o.id),
-    seller,
-    sellerName: o.sellerName,
-    material: o.material,
-    amount: natToNumber(o.amount),
-    pricePerUnitCents: natToNumber(o.pricePerUnitCents),
-    createdAt: nanosToMs(o.createdAt),
-    mine: seller.length > 0 && seller === me,
-  };
-}
-
-/** Reads the payload of one variant arm, whichever binding shape is used. */
-function variantPayload(res: unknown, key: string): unknown {
-  if (res != null && typeof res === "object" && key in res) {
-    return (res as Record<string, unknown>)[key];
-  }
-  return null;
-}
-
-function marketErrorText(err: unknown): string {
-  switch (variantKey(err)) {
-    case "anonymous":
-      return "Please sign in first";
-    case "notRegistered":
-      return "You need a player profile first";
-    case "unknownMaterial":
-      return "Unknown material";
-    case "invalidAmount":
-      return "Invalid amount (1 – 100,000 units)";
-    case "invalidPrice":
-      return "Invalid price (1 cent – $10,000 per unit)";
-    case "tooManyOrders":
-      return "Too many open orders (30 at most)";
-    case "notFound":
-      return "This order no longer exists";
-    case "notSeller":
-      return "Only the seller can withdraw this order";
-    case "ownOrder":
-      return "You cannot buy your own order";
-    case "insufficientFunds":
-      return "Not enough money";
-    case "unknownAsset":
-      return "Unknown asset";
-    case "identicalAssets":
-      return "Pick two different assets";
-    case "slippage":
-      return "The price moved – the swap would pay less than your limit";
-    case "poolTooThin":
-      return MARKET_TOO_LARGE;
-    default:
-      return "The marketplace rejected the request";
-  }
-}
-
-function marketOk(partial: Partial<MarketActionResult>): MarketActionResult {
-  return {
-    ok: true,
-    error: null,
-    order: null,
-    costCents: null,
-    balanceCents: null,
-    swap: null,
-    ...partial,
-  };
-}
-
-function marketFail(error: string): MarketActionResult {
-  return {
-    ok: false,
-    error,
-    order: null,
-    costCents: null,
-    balanceCents: null,
-    swap: null,
-  };
-}
-
-// ---- exchange decoders ----
-
-/** Prices arrive as ten-thousandths of a cent so cheap bulk materials keep
- *  their resolution; the UI only ever sees fractional cents. */
-function centsFromE4(v: bigint | number, scale: number): number {
-  return scale > 0 ? natToNumber(v) / scale : 0;
-}
-
-function toPriceRow(row: MarketPrice, scale: number): MarketPriceRow {
-  return {
-    material: row.material,
-    oracleCents: centsFromE4(row.oracleCentsE4, scale),
-    midCents: centsFromE4(row.midCentsE4, scale),
-    wholesaleCents: natToNumber(row.wholesaleCents),
-    deviationBp: intToNumber(row.deviationBp),
-    poolUnits: natToNumber(row.poolUnits),
-    poolCents: natToNumber(row.poolCents),
-    maxSellUnits: natToNumber(row.maxSellUnits),
-    maxBuyCents: natToNumber(row.maxBuyCents),
-    trend: row.trend.map((p) => ({
-      at: nanosToMs(p.at),
-      midCents: centsFromE4(p.midCentsE4, scale),
-    })),
-  };
-}
-
-function toMarketPrices(snap: MarketSnapshot): MarketPrices {
-  const scale = natToNumber(snap.priceScale);
-  const list = snap.prices.map((row) => toPriceRow(row, scale));
-  const rows: Record<string, MarketPriceRow> = {};
-  for (const row of list) rows[row.material] = row;
-  return {
-    at: nanosToMs(snap.at),
-    feeBp: natToNumber(snap.feeBp),
-    wholesaleSpreadBp: natToNumber(snap.wholesaleSpreadBp),
-    rows,
-    list,
-    swaps: natToNumber(snap.swaps),
-    feeBurnedCents: natToNumber(snap.feeBurnedCents),
-  };
-}
-
-function decodeQuoteResult(res: unknown, scale: number): MarketQuoteResult {
-  if (variantKey(res) !== "ok") {
-    return {
-      ok: false,
-      error: marketErrorText(variantPayload(res, "err")),
-      quote: null,
-    };
-  }
-  const q = variantPayload(res, "ok") as SwapQuote | null;
-  if (!q) return { ok: false, error: MARKET_OFFLINE, quote: null };
-  return {
-    ok: true,
-    error: null,
-    quote: {
-      fromAsset: q.fromAsset,
-      toAsset: q.toAsset,
-      amountIn: natToNumber(q.amountIn),
-      amountOut: natToNumber(q.amountOut),
-      midAmountOut: natToNumber(q.midAmountOut),
-      midCents: centsFromE4(q.midCentsE4, scale),
-      midCentsTo: centsFromE4(q.midCentsE4To, scale),
-      priceImpactBp: natToNumber(q.priceImpactBp),
-      feeCents: natToNumber(q.feeCents),
-      route: [...q.route],
-    },
-  };
-}
-
-function decodeSwapResult(res: unknown, scale: number): MarketActionResult {
-  if (variantKey(res) !== "ok") {
-    return marketFail(marketErrorText(variantPayload(res, "err")));
-  }
-  const r = variantPayload(res, "ok") as SwapReceipt | null;
-  if (!r) return marketOk({});
-  const balanceCents = natToNumber(r.balanceCents);
-  return marketOk({
-    balanceCents,
-    swap: {
-      fromAsset: r.fromAsset,
-      toAsset: r.toAsset,
-      amountIn: natToNumber(r.amountIn),
-      amountOut: natToNumber(r.amountOut),
-      feeCents: natToNumber(r.feeCents),
-      priceImpactBp: natToNumber(r.priceImpactBp),
-      balanceCents,
-      midCents: centsFromE4(r.midCentsE4, scale),
-      midCentsTo: centsFromE4(r.midCentsE4To, scale),
-      at: nanosToMs(r.at),
-    },
-  });
-}
-
-function decodeOrderResult(res: unknown, me: string): MarketActionResult {
-  if (variantKey(res) !== "ok") {
-    return marketFail(marketErrorText(variantPayload(res, "err")));
-  }
-  const order = variantPayload(res, "ok") as Order | null;
-  return marketOk({ order: order ? toMarketOrder(order, me) : null });
-}
-
-function decodeBuyResult(res: unknown, me: string): MarketActionResult {
-  if (variantKey(res) !== "ok") {
-    return marketFail(marketErrorText(variantPayload(res, "err")));
-  }
-  const bought = variantPayload(res, "ok") as Purchase | null;
-  if (!bought) return marketOk({});
-  return marketOk({
-    order: toMarketOrder(bought.order, me),
-    costCents: natToNumber(bought.costCents),
-  });
-}
-
-function decodeBalanceResult(res: unknown): MarketActionResult {
-  if (variantKey(res) !== "ok") {
-    return marketFail(marketErrorText(variantPayload(res, "err")));
-  }
-  const cents = variantPayload(res, "ok") as bigint | number | null;
-  return marketOk({ balanceCents: cents == null ? null : natToNumber(cents) });
-}
-
-type MarketAction =
-  | {
-      kind: "create";
-      material: string;
-      amount: number;
-      pricePerUnitCents: number;
-    }
-  | { kind: "cancel"; orderId: number }
-  | { kind: "buy"; orderId: number; amount: number }
-  | { kind: "wholesale"; material: string; amount: number }
-  | {
-      kind: "swap";
-      fromAsset: SwapAsset;
-      toAsset: SwapAsset;
-      amountIn: number;
-      minAmountOut: number;
-      /** Snapshot scale, so the receipt can be decoded without a refetch. */
-      priceScale: number;
-    };
-
-function toNat(n: number): bigint {
-  return BigInt(Math.max(0, Math.floor(n)));
-}
-
 export interface BackendSync {
   isAuthenticated: boolean;
   isLoggingIn: boolean;
@@ -535,7 +236,7 @@ export interface BackendSync {
   clearRegisterOutcome: () => void;
   checkNameAvailable: (name: string) => Promise<boolean>;
 
-  cloudSave: SaveOutput | null;
+  cloudSave: { data: string } | null;
   cloudChecking: boolean;
   loadProfileIntoGame: () => void;
   loadBusy: boolean;
@@ -552,460 +253,223 @@ export interface BackendSync {
   market: MarketSlice;
 }
 
+// ------------------------------------------------------------- local storage
+
+const PROFILE_KEY = "trash-simulator:profile:v1";
+const SAVE_KEY = "trash-simulator:save:v1";
+
+interface LocalProfile {
+  name: string;
+}
+
+/** Same fields the backend's SaveInput carried. */
+interface LocalSave {
+  xp: number;
+  level: number;
+  totalCollected: number;
+  totalDisposed: number;
+  recyclePoints: number;
+  /** JSON-stringified SaveData, exactly like the backend's `data` field. */
+  data: string;
+  /** Milliseconds since the epoch. */
+  updatedAt: number;
+}
+
+function readJson<T>(key: string): T | null {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+function toProfileOutput(p: LocalProfile, s: LocalSave | null): ProfileOutput {
+  return {
+    name: p.name,
+    xp: BigInt(s?.xp ?? 0),
+    recyclePoints: BigInt(s?.recyclePoints ?? 0),
+    hasSave: s != null && s.data.length > 0,
+    totalCollected: BigInt(s?.totalCollected ?? 0),
+    totalDisposed: BigInt(s?.totalDisposed ?? 0),
+    level: BigInt(s?.level ?? 1),
+    updatedAt: BigInt(s?.updatedAt ?? Date.now()) * 1_000_000n,
+  };
+}
+
+const NAME_PATTERN = /^[A-Za-zÄÖÜäöüß0-9 ._-]{3,24}$/;
+
+const MARKET_UNAVAILABLE = "The marketplace is not part of the standalone version";
+
+function marketFail(error: string): MarketActionResult {
+  return {
+    ok: false,
+    error,
+    order: null,
+    costCents: null,
+    balanceCents: null,
+    swap: null,
+  };
+}
+
+/** Inert market slice: no balance, no orders, every action explains itself. */
+const OFFLINE_MARKET: MarketSlice = {
+  balanceCents: null,
+  orders: [],
+  busy: false,
+  error: null,
+  refresh: () => {},
+  createOrder: async () => marketFail(MARKET_UNAVAILABLE),
+  cancelOrder: async () => marketFail(MARKET_UNAVAILABLE),
+  buy: async () => marketFail(MARKET_UNAVAILABLE),
+  sellWholesale: async () => marketFail(MARKET_UNAVAILABLE),
+  prices: null,
+  pricesBusy: false,
+  refreshPrices: () => {},
+  quote: async () => ({ ok: false, error: MARKET_UNAVAILABLE, quote: null }),
+  swap: async () => marketFail(MARKET_UNAVAILABLE),
+};
+
 export function useBackendSync(): BackendSync {
-  const {
-    identity,
-    isAuthenticated,
-    isLoggingIn,
-    isInitializing,
-    loginError,
-    login,
-    clear,
-  } = useInternetIdentity();
-  const { actor } = useActor<backendInterface>(createActor);
-  const qc = useQueryClient();
-  const principal = identity?.getPrincipal().toText() ?? "anon";
+  const [localProfile, setLocalProfile] = useState<LocalProfile | null>(() =>
+    readJson<LocalProfile>(PROFILE_KEY),
+  );
+  const [localSave, setLocalSave] = useState<LocalSave | null>(() =>
+    readJson<LocalSave>(SAVE_KEY),
+  );
+  const [registerOutcome, setRegisterOutcome] =
+    useState<RegisterOutcome | null>(null);
 
-  const profileQuery = useQuery({
-    queryKey: ["profile", principal],
-    enabled: !!actor && isAuthenticated,
-    retry: false,
-    staleTime: 30_000,
-    queryFn: async (): Promise<ProfileOutput | null> => {
-      if (!actor) return null;
-      return unwrapOpt(await actor.getProfile());
-    },
-  });
+  const profile = useMemo(
+    () => (localProfile ? toProfileOutput(localProfile, localSave) : null),
+    [localProfile, localSave],
+  );
 
-  const profile = profileQuery.data ?? null;
-
-  // Mirror connection status and display name into the store
+  // Mirror profile name + cloud status into the store (as the original did).
   useEffect(() => {
     const st = useGame.getState();
-    if (!isAuthenticated) {
-      st.setCloud("offline");
-      return;
-    }
     if (st.cloudStatus === "offline") st.setCloud("online");
     if (profile && profile.name !== st.playerName)
       st.setPlayerName(profile.name);
-  }, [isAuthenticated, profile]);
+  }, [profile]);
 
-  const cloudQuery = useQuery({
-    queryKey: ["cloudSave", principal],
-    enabled: !!actor && isAuthenticated && !!profile?.hasSave,
-    retry: false,
-    staleTime: 30_000,
-    queryFn: async (): Promise<SaveOutput | null> => {
-      if (!actor) return null;
-      return unwrapOpt(await actor.loadGame());
-    },
-  });
-
-  const lbQuery = useQuery({
-    queryKey: ["leaderboard"],
-    enabled: !!actor,
-    retry: false,
-    staleTime: 20_000,
-    queryFn: async (): Promise<LeaderboardEntry[]> => {
-      if (!actor) return [];
-      return await actor.getLeaderboard(25n);
-    },
-  });
-
-  const gsQuery = useQuery({
-    queryKey: ["globalStats"],
-    enabled: !!actor,
-    retry: false,
-    staleTime: 30_000,
-    queryFn: async (): Promise<GlobalStats | null> => {
-      if (!actor) return null;
-      return await actor.getGlobalStats();
-    },
-  });
-
-  // ---------------- Marketplace ----------------
-  // Wallet and order book live on chain; the materials themselves stay in the
-  // local save, so the caller deducts/restocks them when an action succeeds.
-
-  const balanceQuery = useQuery({
-    queryKey: ["marketBalance", principal],
-    enabled: !!actor && isAuthenticated,
-    retry: false,
-    staleTime: 15_000,
-    queryFn: async (): Promise<number> => {
-      if (!actor) return 0;
-      return natToNumber(await actor.marketBalance());
-    },
-  });
-
-  const ordersQuery = useQuery({
-    queryKey: ["marketOrders"],
-    enabled: !!actor,
-    retry: false,
-    staleTime: 15_000,
-    queryFn: async (): Promise<Order[]> => {
-      if (!actor) return [];
-      return await actor.marketOrders();
-    },
-  });
-
-  const marketOrders = useMemo(
-    () => (ordersQuery.data ?? []).map((o) => toMarketOrder(o, principal)),
-    [ordersQuery.data, principal],
-  );
-
-  // Exchange snapshot: oracle price, pool price and recent trend per material.
-  // A public query, so it also works while signed out - the market can be
-  // browsed before logging in. It keeps itself fresh on the same 20 s cycle
-  // the leaderboard uses.
-  const pricesQuery = useQuery({
-    queryKey: ["marketPrices"],
-    enabled: !!actor,
-    retry: false,
-    staleTime: 20_000,
-    refetchInterval: 20_000,
-    queryFn: async (): Promise<MarketSnapshot | null> => {
-      if (!actor) return null;
-      return await actor.marketPrices();
-    },
-  });
-
-  const marketPrices = useMemo(
-    () => (pricesQuery.data ? toMarketPrices(pricesQuery.data) : null),
-    [pricesQuery.data],
-  );
-
-  // The scale is a backend constant; fall back to it so a quote taken before
-  // the first snapshot still converts correctly.
-  const priceScale = pricesQuery.data
-    ? natToNumber(pricesQuery.data.priceScale)
-    : 10_000;
-
-  const marketMutation = useMutation({
-    mutationFn: async (action: MarketAction): Promise<MarketActionResult> => {
-      if (!actor || !isAuthenticated) return marketFail(MARKET_OFFLINE);
-      switch (action.kind) {
-        case "create":
-          return decodeOrderResult(
-            await actor.marketCreate(
-              action.material,
-              toNat(action.amount),
-              toNat(action.pricePerUnitCents),
-            ),
-            principal,
-          );
-        case "cancel":
-          return decodeOrderResult(
-            await actor.marketCancel(toNat(action.orderId)),
-            principal,
-          );
-        case "buy":
-          return decodeBuyResult(
-            await actor.marketBuy(toNat(action.orderId), toNat(action.amount)),
-            principal,
-          );
-        case "wholesale":
-          return decodeBalanceResult(
-            await actor.marketSellWholesale(
-              action.material,
-              toNat(action.amount),
-            ),
-          );
-        default:
-          return decodeSwapResult(
-            await actor.marketSwap(
-              action.fromAsset,
-              action.toAsset,
-              toNat(action.amountIn),
-              toNat(action.minAmountOut),
-            ),
-            action.priceScale,
-          );
-      }
-    },
-    onSettled: () => {
-      void qc.invalidateQueries({ queryKey: ["marketOrders"] });
-      void qc.invalidateQueries({ queryKey: ["marketBalance", principal] });
-      void qc.invalidateQueries({ queryKey: ["marketPrices"] });
-    },
-  });
-
-  const runMarket = marketMutation.mutateAsync;
-  const marketAction = useCallback(
-    async (action: MarketAction): Promise<MarketActionResult> => {
-      if (!actor || !isAuthenticated) return marketFail(MARKET_OFFLINE);
-      try {
-        return await runMarket(action);
-      } catch {
-        return marketFail("The marketplace is not reachable");
-      }
-    },
-    [actor, isAuthenticated, runMarket],
-  );
-
-  const createOrder = useCallback(
-    (material: string, amount: number, pricePerUnitCents: number) =>
-      marketAction({ kind: "create", material, amount, pricePerUnitCents }),
-    [marketAction],
-  );
-  const cancelOrder = useCallback(
-    (orderId: number) => marketAction({ kind: "cancel", orderId }),
-    [marketAction],
-  );
-  const buyOrder = useCallback(
-    (orderId: number, amount: number) =>
-      marketAction({ kind: "buy", orderId, amount }),
-    [marketAction],
-  );
-  const sellWholesale = useCallback(
-    (material: string, amount: number) =>
-      marketAction({ kind: "wholesale", material, amount }),
-    [marketAction],
-  );
-
-  const marketSwap = useCallback(
-    (
-      fromAsset: SwapAsset,
-      toAsset: SwapAsset,
-      amountIn: number,
-      minAmountOut: number,
-    ) =>
-      marketAction({
-        kind: "swap",
-        fromAsset,
-        toAsset,
-        amountIn,
-        minAmountOut,
-        priceScale,
-      }),
-    [marketAction, priceScale],
-  );
-
-  // A plain query, not a mutation: it must not flip `busy` or invalidate
-  // anything, so the UI can call it on every keystroke behind a debounce.
-  const marketQuote = useCallback(
-    async (
-      fromAsset: SwapAsset,
-      toAsset: SwapAsset,
-      amountIn: number,
-    ): Promise<MarketQuoteResult> => {
-      if (!actor) return { ok: false, error: MARKET_OFFLINE, quote: null };
-      try {
-        return decodeQuoteResult(
-          await actor.marketQuote(fromAsset, toAsset, toNat(amountIn)),
-          priceScale,
-        );
-      } catch {
-        return {
-          ok: false,
-          error: "The marketplace is not reachable",
-          quote: null,
-        };
-      }
-    },
-    [actor, priceScale],
-  );
-
-  const refreshMarket = useCallback(() => {
-    void qc.invalidateQueries({ queryKey: ["marketOrders"] });
-    void qc.invalidateQueries({ queryKey: ["marketBalance", principal] });
-    void qc.invalidateQueries({ queryKey: ["marketPrices"] });
-  }, [qc, principal]);
-
-  const refreshPrices = useCallback(() => {
-    void qc.invalidateQueries({ queryKey: ["marketPrices"] });
-  }, [qc]);
-
-  const registerMutation = useMutation({
-    mutationFn: async (name: string): Promise<RegisterOutcome> => {
-      if (!actor) throw new Error("No connection");
-      const res = await actor.registerProfile(name);
-      const key = variantKey(res);
-      if (key === "ok" || key === "alreadyRegistered") return "ok";
-      if (key === "nameTaken") return "nameTaken";
-      if (key === "invalidName") return "invalidName";
-      if (key === "anonymous") return "anonymous";
-      // Unknown response format: do not guess - the profile fetch below
-      // decides whether the registration actually went through.
-      return "error";
-    },
-    onSettled: async () => {
-      // Whatever the response format: the truth is in the profile.
-      // If it exists now, the control room switches to the menu right away.
-      try {
-        if (actor) {
-          const p = unwrapOpt(await actor.getProfile());
-          if (p) qc.setQueryData(["profile", principal], p);
-        }
-      } catch {
-        /* Direct fetch failed - the invalidation below picks it up */
-      }
-      void qc.invalidateQueries({ queryKey: ["profile", principal] });
-      void qc.invalidateQueries({ queryKey: ["leaderboard"] });
-    },
-  });
-
-  const saveMutation = useMutation({
-    mutationFn: async () => {
-      if (!actor || !isAuthenticated) throw new Error("Not signed in");
-      const st = useGame.getState();
-      const input: SaveInput = {
-        xp: BigInt(Math.floor(st.xp)),
-        level: BigInt(levelFromXp(st.xp).level),
-        totalCollected: BigInt(st.stats.collected),
-        totalDisposed: BigInt(st.stats.disposed),
-        recyclePoints: BigInt(Math.floor(st.recyclePoints)),
+  const saveToProfile = useCallback(() => {
+    const st = useGame.getState();
+    st.setCloud("sync");
+    try {
+      const rec: LocalSave = {
+        xp: Math.floor(st.xp),
+        level: levelFromXp(st.xp).level,
+        totalCollected: st.stats.collected,
+        totalDisposed: st.stats.disposed,
+        recyclePoints: Math.floor(st.recyclePoints),
         data: JSON.stringify(st.serialize()),
+        updatedAt: Date.now(),
       };
-      useGame.getState().setCloud("sync");
-      const ok = await actor.saveGame(input);
-      if (!ok) throw new Error("Save rejected");
-    },
-    onSuccess: () => {
-      const st = useGame.getState();
+      window.localStorage.setItem(SAVE_KEY, JSON.stringify(rec));
+      setLocalSave(rec);
       st.setCloud("online");
       st.clearDirty();
-      void qc.invalidateQueries({ queryKey: ["leaderboard"] });
-      void qc.invalidateQueries({ queryKey: ["globalStats"] });
-      void qc.invalidateQueries({ queryKey: ["profile", principal] });
-      void qc.invalidateQueries({ queryKey: ["cloudSave", principal] });
-    },
-    onError: () => {
-      useGame.getState().setCloud("error", "Saving to the profile failed");
-    },
-  });
+    } catch {
+      useGame.getState().setCloud("error", "Saving locally failed");
+    }
+  }, []);
 
-  const resetMutation = useMutation({
-    mutationFn: async () => {
-      if (!actor || !isAuthenticated) throw new Error("Not signed in");
-      await actor.resetProgress();
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["profile", principal] });
-      void qc.invalidateQueries({ queryKey: ["cloudSave", principal] });
-    },
-  });
-
-  // Automatic save every five minutes, provided there are changes
-  const savingRef = useRef(false);
-  savingRef.current = saveMutation.isPending;
-  const saveFn = saveMutation.mutate;
+  // Automatic save every five minutes, provided there are changes.
   useEffect(() => {
-    if (!isAuthenticated || !actor) return;
     const t = window.setInterval(() => {
       const st = useGame.getState();
-      if (st.cloudDirty && st.screen === "game" && !savingRef.current) saveFn();
+      if (st.cloudDirty && st.screen === "game") saveToProfile();
     }, AUTOSAVE_MS);
     return () => window.clearInterval(t);
-  }, [isAuthenticated, actor, saveFn]);
+  }, [saveToProfile]);
 
   const loadProfileIntoGame = useCallback(() => {
-    const out = cloudQuery.data;
     const st = useGame.getState();
-    if (!out || out.data.length === 0) return;
+    if (!localSave || localSave.data.length === 0) return;
     try {
-      st.applySave(JSON.parse(out.data) as SaveData);
+      st.applySave(JSON.parse(localSave.data) as SaveData);
       st.setScreen("game");
       st.setCloud("online");
       st.clearDirty();
     } catch {
-      st.setCloud("error", "The save game in the profile is unreadable");
+      st.setCloud("error", "The local save game is unreadable");
     }
-  }, [cloudQuery.data]);
+  }, [localSave]);
 
   const startFreshRun = useCallback(() => {
+    try {
+      window.localStorage.removeItem(SAVE_KEY);
+    } catch {
+      /* storage unavailable – the in-memory newGame below still works */
+    }
+    setLocalSave(null);
     const name = useGame.getState().playerName;
-    resetMutation.mutate();
     useGame.getState().newGame(name);
-  }, [resetMutation.mutate]);
+  }, []);
 
-  const checkNameAvailable = useCallback(
-    async (name: string): Promise<boolean> => {
-      if (!actor) return false;
-      try {
-        return await actor.isNameAvailable(name);
-      } catch {
-        return false;
-      }
-    },
-    [actor],
-  );
+  const registerName = useCallback((name: string) => {
+    const trimmed = name.trim();
+    if (!NAME_PATTERN.test(trimmed)) {
+      setRegisterOutcome("invalidName");
+      return;
+    }
+    const p: LocalProfile = { name: trimmed };
+    try {
+      window.localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
+    } catch {
+      /* storage unavailable – the session profile still works */
+    }
+    setLocalProfile(p);
+    setRegisterOutcome("ok");
+  }, []);
+
+  // Sign-out ends the local session only: the save stays in the browser, so
+  // signing back in (choosing an operator ID again) restores it.
+  const logout = useCallback(() => {
+    try {
+      window.localStorage.removeItem(PROFILE_KEY);
+    } catch {
+      /* ignore */
+    }
+    setLocalProfile(null);
+    setRegisterOutcome(null);
+  }, []);
 
   return {
-    isAuthenticated,
-    isLoggingIn,
-    authInitializing: isInitializing,
-    loginError,
-    login: () => login(),
-    logout: clear,
+    isAuthenticated: true,
+    isLoggingIn: false,
+    authInitializing: false,
+    loginError: null,
+    login: () => {},
+    logout,
 
     profile,
-    profileChecking:
-      isAuthenticated && !profileQuery.isSuccess && !profileQuery.isError,
-    profileError: profileQuery.isError,
-    retryProfile: () => {
-      void profileQuery.refetch();
-    },
-    needsRegistration: isAuthenticated && profileQuery.isSuccess && !profile,
-    registerName: (name: string) => {
-      registerMutation.mutate(name);
-    },
-    registerBusy: registerMutation.isPending,
-    registerOutcome: registerMutation.isError
-      ? "error"
-      : (registerMutation.data ?? null),
-    clearRegisterOutcome: () => registerMutation.reset(),
-    checkNameAvailable,
+    profileChecking: false,
+    profileError: false,
+    retryProfile: () => {},
+    needsRegistration: localProfile == null,
+    registerName,
+    registerBusy: false,
+    registerOutcome,
+    clearRegisterOutcome: () => setRegisterOutcome(null),
+    checkNameAvailable: async (name: string) => NAME_PATTERN.test(name.trim()),
 
-    cloudSave: cloudQuery.data ?? null,
-    cloudChecking: cloudQuery.isFetching,
+    cloudSave: localSave ? { data: localSave.data } : null,
+    cloudChecking: false,
     loadProfileIntoGame,
-    loadBusy: cloudQuery.isFetching,
-    saveToProfile: () => saveMutation.mutate(),
-    saveBusy: saveMutation.isPending,
+    loadBusy: false,
+    saveToProfile,
+    saveBusy: false,
     startFreshRun,
-    resetBusy: resetMutation.isPending,
+    resetBusy: false,
 
-    // null = no connection (so the UI shows "No connection" instead of the
-    // misleading "No entries yet" when there is simply no actor/session).
-    leaderboard: !actor || lbQuery.isError ? null : (lbQuery.data ?? []),
-    globalStats: gsQuery.data ?? null,
-    leaderboardBusy: lbQuery.isFetching,
-    refreshLeaderboard: () => {
-      void qc.invalidateQueries({ queryKey: ["leaderboard"] });
-      void qc.invalidateQueries({ queryKey: ["globalStats"] });
-    },
+    // No shared leaderboard or global stats in the standalone build.
+    leaderboard: null,
+    globalStats: null,
+    leaderboardBusy: false,
+    refreshLeaderboard: () => {},
 
-    market: {
-      // Without a connection the market renders empty instead of failing.
-      balanceCents:
-        !actor || !isAuthenticated ? null : (balanceQuery.data ?? null),
-      orders: marketOrders,
-      busy:
-        marketMutation.isPending ||
-        ordersQuery.isFetching ||
-        balanceQuery.isFetching,
-      error: !actor
-        ? MARKET_OFFLINE
-        : ordersQuery.isError || balanceQuery.isError
-          ? "The marketplace is not reachable"
-          : marketMutation.data && !marketMutation.data.ok
-            ? marketMutation.data.error
-            : null,
-      refresh: refreshMarket,
-      createOrder,
-      cancelOrder,
-      buy: buyOrder,
-      sellWholesale,
-
-      // Without a connection the exchange renders empty and every action
-      // answers MARKET_OFFLINE, so no material is ever moved locally.
-      prices: !actor || pricesQuery.isError ? null : marketPrices,
-      pricesBusy: pricesQuery.isFetching,
-      refreshPrices,
-      quote: marketQuote,
-      swap: marketSwap,
-    },
+    market: OFFLINE_MARKET,
   };
 }

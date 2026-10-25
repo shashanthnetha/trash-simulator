@@ -142,9 +142,6 @@ export class InputManager {
       case "KeyI":
         this.cb.onAction("inventory");
         break;
-      case "KeyM":
-        this.cb.onAction("market");
-        break;
       case "Digit1":
       case "Numpad1":
         this.cb.onAction("tool1");
