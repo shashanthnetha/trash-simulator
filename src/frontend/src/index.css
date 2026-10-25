@@ -1,0 +1,401 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--asphalt);
+  color: var(--chalk);
+  font-family: "Barlow", "Segoe UI", system-ui, -apple-system, sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+  overscroll-behavior: none;
+}
+
+canvas.game-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+
+.vignette {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(0, 0, 0, 0) 55%,
+    rgba(4, 12, 18, 0.42) 100%
+  );
+}
+
+.hud-panel {
+  background: rgba(8, 22, 30, 0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 12px;
+}
+
+.menu-panel {
+  background: rgba(7, 18, 26, 0.88);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.crosshair-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+
+.crosshair-dot.active {
+  transform: scale(1.8);
+  background: #7fe3a0;
+}
+
+@keyframes floatUp {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 10px);
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -46px);
+  }
+}
+
+.float-text {
+  animation: floatUp 1.3s ease-out forwards;
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.toast-item {
+  animation: toastIn 0.25s ease-out;
+}
+
+.touch-stick {
+  position: absolute;
+  border-radius: 9999px;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.06);
+  touch-action: none;
+}
+
+.touch-stick .knob {
+  position: absolute;
+  width: 46%;
+  height: 46%;
+  left: 27%;
+  top: 27%;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.touch-btn {
+  border-radius: 9999px;
+  border: 2px solid rgba(255, 255, 255, 0.28);
+  background: rgba(8, 22, 30, 0.5);
+  color: #fff;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+}
+
+.touch-btn:active {
+  background: rgba(127, 227, 160, 0.35);
+}
+
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ============================================================
+   Trash Simulator – control room
+   The visual language of waste logistics: asphalt, galvanised steel,
+   hazard stripes, stencil lettering on skip walls.
+   ============================================================ */
+
+:root {
+  --asphalt: #0e1214;
+  --steel: #161c1f;
+  --steel-hi: #1d2529;
+  --seam: #2a3438;
+  --amber: #f2a007;
+  --amber-dim: #a86f05;
+  --sorted: #9bc53d;
+  --chalk: #e6e9e6;
+  --muted: #7c8b90;
+}
+
+.ts-shell {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  background: radial-gradient(
+      120% 80% at 50% -10%,
+      rgba(242, 160, 7, 0.07) 0%,
+      rgba(14, 18, 20, 0) 60%
+    ), linear-gradient(180deg, #11171a 0%, var(--asphalt) 45%, #0a0e10 100%);
+}
+
+/* Asphalt grain – noise so the surface does not look digitally smooth */
+.ts-grain::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  background-image: radial-gradient(
+      rgba(255, 255, 255, 0.045) 1px,
+      transparent 1px
+    ), radial-gradient(rgba(0, 0, 0, 0.5) 1px, transparent 1px);
+  background-size: 3px 3px, 5px 5px;
+  background-position: 0 0, 1px 2px;
+}
+
+/* Signature: hazard stripe like the edge of a skip */
+.hazard-rail {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--amber) 0 14px,
+    #14181a 14px 28px
+  );
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+
+.ts-eyebrow {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.ts-display {
+  font-family: "Oswald", "Barlow Condensed", "Arial Narrow", sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-transform: uppercase;
+  line-height: 0.86;
+  color: var(--chalk);
+}
+
+.ts-mono {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-label {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Riveted sheet-steel plate – the carrier element for all content */
+.plate {
+  position: relative;
+  background: linear-gradient(180deg, var(--steel-hi) 0%, var(--steel) 100%);
+  border: 1px solid var(--seam);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 18px 40px -24px
+    rgba(0, 0, 0, 0.9);
+}
+
+.plate-riveted::before,
+.plate-riveted::after {
+  content: "";
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 2px;
+  background-image: radial-gradient(
+    circle,
+    rgba(255, 255, 255, 0.22) 1.4px,
+    transparent 1.6px
+  );
+  background-size: 3px 18px;
+  opacity: 0.8;
+}
+.plate-riveted::before {
+  left: 8px;
+}
+.plate-riveted::after {
+  right: 8px;
+}
+
+/* Operating-data row with dot leaders, like on a weighbridge ticket */
+.board-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.board-row .lead {
+  flex: 1;
+  border-bottom: 1px dotted rgba(124, 139, 144, 0.45);
+  transform: translateY(-3px);
+}
+
+.btn {
+  position: relative;
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--seam);
+  background: var(--steel-hi);
+  color: var(--chalk);
+  font-family: "Oswald", "Barlow Condensed", sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transition: background 0.16s ease, border-color 0.16s ease, transform 0.16s
+    ease;
+}
+.btn:hover:not(:disabled) {
+  background: #222b30;
+  border-color: #3a474d;
+}
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn .tag {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.btn-primary {
+  background: var(--amber);
+  border-color: #c8860a;
+  color: #17130a;
+}
+.btn-primary:hover:not(:disabled) {
+  background: #ffb42a;
+  border-color: #ffb42a;
+}
+.btn-primary .tag {
+  color: rgba(23, 19, 10, 0.62);
+}
+
+.ts-input {
+  width: 100%;
+  background: #0c1113;
+  border: 1px solid var(--seam);
+  padding: 12px 14px;
+  color: var(--chalk);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+  outline: none;
+  transition: border-color 0.16s ease;
+}
+.ts-input:focus {
+  border-color: var(--amber);
+}
+.ts-input::placeholder {
+  color: #4c585c;
+}
+
+:where(.btn, .ts-input, button, a):focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+
+.scroll-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: #33403f;
+}
+
+/* Start-up sequence: the stripe wipes in, the content rises */
+@keyframes railWipe {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+@keyframes riseIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.anim-rail {
+  transform-origin: top;
+  animation: railWipe 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.anim-rise {
+  animation: riseIn 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.d1 {
+  animation-delay: 0.08s;
+}
+.d2 {
+  animation-delay: 0.16s;
+}
+.d3 {
+  animation-delay: 0.24s;
+}
+.d4 {
+  animation-delay: 0.32s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-rail,
+  .anim-rise {
+    animation: none;
+  }
+}

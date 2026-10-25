@@ -1,0 +1,14 @@
+manifest_version = "0.1.0"
+
+[project]
+name = "Trash Simulator"
+# id is assigned by caffeine.ai on the first import/preview - deliberately
+# omitted for a new local project (the CLI or the platform fills it in).
+
+[workspace]
+include = [ "src/**" ]
+
+# Build the backend first, because the frontend imports the generated bindings
+# (derived from the backend's Candid interface).
+[canisters.frontend]
+depends_on = [ "backend" ]
