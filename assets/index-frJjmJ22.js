@@ -106598,7 +106598,6 @@ function ControlLegend({ touch: touch2 }) {
     ["H", "Horn (hold, in the jeep)"],
     ["Tab", "Menu"],
     ["I", "Inventory"],
-    ["M", "Marketplace"],
     ["Esc", "Pause"]
   ];
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("footer", { className: "anim-rise d4", children: [
